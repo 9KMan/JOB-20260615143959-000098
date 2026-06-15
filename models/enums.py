@@ -1,8 +1,13 @@
-"""Enum definitions mapped to PostgreSQL ENUM types."""
-import enum
+// models/enums.py
+"""PostgreSQL enum types for the scraping framework.
+
+These enums are created as PostgreSQL types via Alembic migration.
+SQLAlchemy uses these as TypeEngine decorators.
+"""
+from enum import Enum
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(str, Enum):
     """Status of a scraping job/batch."""
     PENDING = "pending"
     RUNNING = "running"
@@ -11,8 +16,8 @@ class JobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class TaskStatus(str, enum.Enum):
-    """Status of a scraping task within a job."""
+class TaskStatus(str, Enum):
+    """Status of an individual scrape task."""
     PENDING = "pending"
     CLAIMED = "claimed"
     PROCESSING = "processing"
@@ -21,21 +26,21 @@ class TaskStatus(str, enum.Enum):
     DEAD_LETTER = "dead_letter"
 
 
-class CircuitState(str, enum.Enum):
+class CircuitState(str, Enum):
     """Circuit breaker state for tasks and workers."""
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
 
 
-class FailureCategory(str, enum.Enum):
-    """Category of a scrape failure."""
+class FailureCategory(str, Enum):
+    """Classification of failure types."""
     TRANSIENT = "transient"
     TERMINAL = "terminal"
     UNKNOWN = "unknown"
 
 
-class ProxyStatus(str, enum.Enum):
+class ProxyStatus(str, Enum):
     """Status of a proxy session."""
     ACTIVE = "active"
     EXHAUSTED = "exhausted"
@@ -43,101 +48,49 @@ class ProxyStatus(str, enum.Enum):
     RETIRED = "retired"
 
 
-class WorkerStatus(str, enum.Enum):
+class WorkerStatus(str, Enum):
     """Status of a worker instance."""
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     OFFLINE = "offline"
 
 
-# Terminal errors that should not be retried
-TERMINAL_ERROR_CODES = frozenset([
+# Error code constants for classification
+TERMINAL_ERRORS = frozenset([
     "HTTP_403",
     "HTTP_451",
     "PERMANENT_BLOCK",
     "ACCOUNT_LOCKED",
-    "SITE_BLOCKED",
+    "CLOUDFLARE_BLOCK",
+    "DATADOME_BLOCK",
 ])
 
-# Transient errors that may succeed on retry
-TRANSIENT_ERROR_CODES = frozenset([
+TRANSIENT_ERRORS = frozenset([
     "ERR_TUNNEL",
     "TIMEOUT",
     "RATE_LIMIT",
     "CONNECTION_RESET",
     "CONNECTION_REFUSED",
-    "DNS_FAILURE",
+    "CONNECTION_TIMEOUT",
+    "SSL_ERROR",
+    "NETWORK_ERROR",
     "PROXY_AUTH_FAILED",
-    "SESSION_EXPIRED",
+    "TUNNEL_ERROR",
 ])
 
-# Error codes that may indicate anti-bot measures
-ANTI_BOT_ERROR_CODES = frozenset([
-    "CAPTCHA",
-    "ANTI_BOT",
-    "HEADLESS_DETECTED",
-    "CLOUDFLARE_BLOCK",
-    "INCAPSULA_BLOCK",
-])
 
-# Default retry policies configuration
-DEFAULT_RETRY_POLICIES = {
-    "ERR_TUNNEL": {
-        "base_delay_seconds": 30,
-        "max_delay_seconds": 3600,
-        "multiplier": 2.0,
-        "max_attempts": 5,
-    },
-    "TIMEOUT": {
-        "base_delay_seconds": 10,
-        "max_delay_seconds": 300,
-        "multiplier": 1.5,
-        "max_attempts": 5,
-    },
-    "CAPTCHA": {
-        "base_delay_seconds": 60,
-        "max_delay_seconds": 1800,
-        "multiplier": 2.0,
-        "max_attempts": 3,
-    },
-    "ANTI_BOT": {
-        "base_delay_seconds": 120,
-        "max_delay_seconds": 3600,
-        "multiplier": 2.0,
-        "max_attempts": 3,
-    },
-    "RATE_LIMIT": {
-        "base_delay_seconds": 60,
-        "max_delay_seconds": 1800,
-        "multiplier": 1.5,
-        "max_attempts": 5,
-    },
-    "CONNECTION_RESET": {
-        "base_delay_seconds": 5,
-        "max_delay_seconds": 120,
-        "multiplier": 2.0,
-        "max_attempts": 5,
-    },
-    "TRANSIENT": {
-        "base_delay_seconds": 10,
-        "max_delay_seconds": 300,
-        "multiplier": 1.5,
-        "max_attempts": 3,
-    },
-    "UNKNOWN": {
-        "base_delay_seconds": 30,
-        "max_delay_seconds": 600,
-        "multiplier": 2.0,
-        "max_attempts": 3,
-    },
-}
-
-
-def classify_error_code(error_code: str) -> FailureCategory:
-    """Classify an error code into transient/terminal/unknown category."""
-    upper_code = error_code.upper()
-    if upper_code in TERMINAL_ERROR_CODES:
+def classify_error(error_code: str) -> FailureCategory:
+    """Classify an error code as transient, terminal, or unknown.
+    
+    Args:
+        error_code: The error code string to classify.
+        
+    Returns:
+        FailureCategory enum value.
+    """
+    if error_code in TERMINAL_ERRORS:
         return FailureCategory.TERMINAL
-    if upper_code in TRANSIENT_ERROR_CODES or upper_code in ANTI_BOT_ERROR_CODES:
+    elif error_code in TRANSIENT_ERRORS:
         return FailureCategory.TRANSIENT
-    return FailureCategory.UNKNOWN
+    else:
+        return FailureCategory.UNKNOWN
