@@ -1,0 +1,177 @@
+{
+  "rabbit_version": "3.13.0",
+  "rabbit_version_tag": "3.13",
+  "product_name": "RabbitMQ",
+  "product_version": "3.13.0",
+  "users": [
+    {
+      "name": "scraper",
+      "password_hash": "SCrAM7ExampleHashHere==",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "scraper",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "topic_permissions": [],
+  "parameters": [],
+  "global_parameters": [
+    {
+      "name": "cluster_name",
+      "value": "scraper_cluster"
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "dead-letter-policy",
+      "pattern": "^scraper\\.jobs$",
+      "apply-to": "queues",
+      "definition": {
+        "dead-letter-exchange": "scraper.dlx",
+        "dead-letter-routing-key": "dlq",
+        "message-ttl": 30000
+      },
+      "priority": 10
+    },
+    {
+      "vhost": "/",
+      "name": "retry-policy",
+      "pattern": "^scraper\\.jobs\\.retry$",
+      "apply-to": "queues",
+      "definition": {
+        "dead-letter-exchange": "scraper.direct",
+        "dead-letter-routing-key": "jobs",
+        "expiration": "30000"
+      },
+      "priority": 10
+    }
+  ],
+  "queues": [
+    {
+      "name": "scraper.jobs",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "scraper.dlx",
+        "x-dead-letter-routing-key": "dlq",
+        "x-message-ttl": 30000,
+        "x-max-priority": 10
+      }
+    },
+    {
+      "name": "scraper.jobs.retry",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "scraper.direct",
+        "x-dead-letter-routing-key": "jobs",
+        "x-message-ttl": 30000,
+        "x-max-priority": 10
+      }
+    },
+    {
+      "name": "scraper.jobs.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "scraper.results",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 86400000
+      }
+    },
+    {
+      "name": "scraper.heartbeat",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 60000,
+        "x-max-length": 10000
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "scraper.direct",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "scraper.dlx",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "scraper.retry",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "scraper.direct",
+      "vhost": "/",
+      "destination": "scraper.jobs",
+      "destination_type": "queue",
+      "routing_key": "jobs",
+      "arguments": {}
+    },
+    {
+      "source": "scraper.direct",
+      "vhost": "/",
+      "destination": "scraper.jobs.retry",
+      "destination_type": "queue",
+      "routing_key": "retry",
+      "arguments": {}
+    },
+    {
+      "source": "scraper.dlx",
+      "vhost": "/",
+      "destination": "scraper.jobs.dlq",
+      "destination_type": "queue",
+      "routing_key": "dlq",
+      "arguments": {}
+    },
+    {
+      "source": "scraper.retry",
+      "vhost": "/",
+      "destination": "scraper.jobs.retry",
+      "destination_type": "queue",
+      "routing_key": "jobs.retry",
+      "arguments": {}
+    }
+  ]
+}

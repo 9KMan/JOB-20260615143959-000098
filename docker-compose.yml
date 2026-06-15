@@ -1,10 +1,253 @@
-version: '3.8'
+# =============================================================================
+# Docker Compose - Full Stack Scraper Framework
+# =============================================================================
+
 services:
-  app:
-    build: .
-    volumes:
-      - .:/app
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: scraper_postgres
+    restart: unless-stopped
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - RABBITMQ_URL=${RABBITMQ_URL}
-      - OXYLABS_KEY=${OXYLABS_KEY}
+      POSTGRES_DB: ${POSTGRES_DB:-scraper_db}
+      POSTGRES_USER: ${POSTGRES_USER:-scraper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scraper_secure_password}
+      POSTGRES_MAX_CONNECTIONS: 100
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scraper} -d ${POSTGRES_DB:-scraper_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # PGBouncer Connection Pooler
+  # ---------------------------------------------------------------------------
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.22
+    container_name: scraper_pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-scraper}:${POSTGRES_PASSWORD:-scraper_secure_password}@postgres:5432/${POSTGRES_DB:-scraper_db}"
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 20
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      RESERVE_POOL_TIMEOUT: 3
+      LOG_CONNECTIONS: 0
+      LOG_DISCONNECTIONS: 0
+      SERVER_RESET_ON_RELEASE: 1
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgbouncer -V"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ Message Broker
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: scraper_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-scraper}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-scraper_secure_password}
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./setup/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./setup/rabbitmq-definitions.json:/etc/rabbitmq/definitions.json:ro
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:15672/api/health/checks/alarms"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # Prometheus Metrics
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: scraper_prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./setup/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - rabbitmq
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # Grafana Dashboards (Optional)
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: scraper_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: redis-app,grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./setup/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # Scraper Worker (Scalable)
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scraper_worker
+    restart: unless-stopped
+    environment:
+      # Python
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      # Database
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-scraper}:${POSTGRES_PASSWORD:-scraper_secure_password}@pgbouncer:5432/${POSTGRES_DB:-scraper_db}"
+      DATABASE_POOL_SIZE: 5
+      DATABASE_MAX_OVERFLOW: 10
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-scraper}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-scraper_secure_password}
+      RABBITMQ_VHOST: /
+      # Proxy
+      OXYLABS_USERNAME: ${OXYLABS_USERNAME}
+      OXYLABS_PASSWORD: ${OXYLABS_PASSWORD}
+      # LLM
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Worker
+      WORKER_PREFETCH_COUNT: 1
+      WORKER_HEARTBEAT_INTERVAL: 30
+      WORKER_MAX_RETRIES: 5
+      WORKER_RETRY_DELAY: 30
+      # Display
+      DISPLAY: ":99"
+    volumes:
+      - worker_data:/tmp/scraper
+      - ./logs:/app/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    shm_size: '2gb'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - scraper_network
+
+  # ---------------------------------------------------------------------------
+  # API Service
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: scraper_api
+    restart: unless-stopped
+    environment:
+      # Python
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      # Database
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-scraper}:${POSTGRES_PASSWORD:-scraper_secure_password}@pgbouncer:5432/${POSTGRES_DB:-scraper_db}"
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-scraper}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-scraper_secure_password}
+      # API
+      API_HOST: "0.0.0.0"
+      API_PORT: 8000
+      API_WORKERS: 4
+      API_RELOAD: "false"
+      # Auth
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
+      JWT_ALGORITHM: "HS256"
+      JWT_EXPIRATION_MINUTES: 60
+      # CORS
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://localhost:8080}"
+      # LLM
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - scraper_network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  scraper_network:
+    driver: bridge
+    name: scraper_network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    name: scraper_postgres_data
+  rabbitmq_data:
+    name: scraper_rabbitmq_data
+  prometheus_data:
+    name: scraper_prometheus_data
+  grafana_data:
+    name: scraper_grafana_data
+  worker_data:
+    name: scraper_worker_data

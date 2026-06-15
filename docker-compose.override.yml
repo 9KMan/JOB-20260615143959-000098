@@ -1,0 +1,63 @@
+# =============================================================================
+# Docker Compose Override for Local Development
+# =============================================================================
+# Usage: docker-compose up -d
+# This file is automatically loaded by docker-compose for local development
+
+services:
+  # ---------------------------------------------------------------------------
+  # Worker with debug settings and live code reloading
+  # ---------------------------------------------------------------------------
+  worker:
+    environment:
+      # Debug
+      DEBUG: "true"
+      LOG_LEVEL: "DEBUG"
+      # Extended timeouts for debugging
+      WORKER_JOB_TIMEOUT: 300
+      WORKER_PAGE_LOAD_TIMEOUT: 120
+      WORKER_NAVIGATION_TIMEOUT: 120
+      # Playwright
+      PLAYWRIGHT_HEADLESS: "true"
+      PLAYWRIGHT_SLOW_MO: 100
+    volumes:
+      # Mount source code for live reloading
+      - ./src:/app/src:ro
+      - ./scraper:/app/scraper:rw
+    command: ["python", "-m", "scraper.worker", "--log-level", "DEBUG"]
+
+  # ---------------------------------------------------------------------------
+  # API with reload enabled
+  # ---------------------------------------------------------------------------
+  api:
+    environment:
+      DEBUG: "true"
+      LOG_LEVEL: "DEBUG"
+      API_RELOAD: "true"
+    volumes:
+      - ./src:/app/src:ro
+      - ./scraper:/app/scraper:rw
+    command: ["uvicorn", "scraper.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # ---------------------------------------------------------------------------
+  # Prometheus with longer retention for debugging
+  # ---------------------------------------------------------------------------
+  prometheus:
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--log.level=debug'
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ with delayed message plugin for testing
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    environment:
+      RABBITMQ_LOG_LEVEL: "debug"
+      RABBITMQ_DELAYED_MESSAGE_EXCHANGE: "true"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "15692:15692"  # Prometheus metrics
