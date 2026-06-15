@@ -1,0 +1,38 @@
+# Python 3.12 Runtime
+python==3.12.3
+
+# Scraping/Playwright
+playwright==1.42.0
+playwright-stealth==1.0.6
+xvfbwrapper==0.2.13
+
+# Message Queue/Workers
+pika==1.3.2
+aio-pika==9.4.0
+tenacity==8.2.3
+circuitbreaker==1.4.0
+
+# Database/ORM
+sqlalchemy==2.0.25
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# LLM Integration
+openai==1.12.0
+anthropic==0.18.0
+pydantic==2.6.0
+pydantic-settings==2.1.0
+
+# API/Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+httpx==0.26.0
+
+# Monitoring/Logging
+structlog==24.1.0
+prometheus-client==0.19.0
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.9
